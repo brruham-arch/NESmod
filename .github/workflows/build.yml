@@ -135,31 +135,8 @@ jobs:
           }
           EOF
 
-          # 7. Patch APU src files — hapus SFML/Audio/SoundStream.hpp
-          for f in $DST/src/APU/APU.cpp $DST/src/APU/DMC.cpp $DST/src/APU/Noise.cpp 
-                   $DST/src/APU/Pulse.cpp $DST/src/APU/Triangle.cpp $DST/src/APU/FrameCounter.cpp $DST/src/APU/Units.cpp; do
-            sed -i "s|#include <SFML/Audio/SoundStream.hpp>||g" "$f" 2>/dev/null || true
-            sed -i "s|#include <SFML/Audio.hpp>||g" "$f" 2>/dev/null || true
-          done
-
-          # patch APU src
-          for f in APU DMC Noise Pulse Triangle FrameCounter Units; do
-            sed -i 's|#include <SFML/Audio/SoundStream.hpp>||g' $DST/src/APU/${f}.cpp 2>/dev/null || true
-            sed -i 's|#include <SFML/Audio.hpp>||g' $DST/src/APU/${f}.cpp 2>/dev/null || true
-          done
-
-          # 7. patch APU src files
-          python3 -c "
-import os, re
-dst = 'app/src/main/cpp/nes/src/APU'
-for fn in os.listdir(dst):
-    if fn.endswith('.cpp'):
-        path = os.path.join(dst, fn)
-        txt = open(path).read()
-        txt = re.sub(r'#include\s*<SFML/Audio[^>]*>', '', txt)
-        open(path, 'w').write(txt)
-print('APU patched')
-"
+          # 7. patch APU src
+          python3 scripts/patch_apu.py
 
           echo "=== Patch done ==="
 
