@@ -135,6 +135,13 @@ jobs:
           }
           EOF
 
+          # 7. Patch APU src files — hapus SFML/Audio/SoundStream.hpp
+          for f in $DST/src/APU/APU.cpp $DST/src/APU/DMC.cpp $DST/src/APU/Noise.cpp 
+                   $DST/src/APU/Pulse.cpp $DST/src/APU/Triangle.cpp $DST/src/APU/FrameCounter.cpp $DST/src/APU/Units.cpp; do
+            sed -i "s|#include <SFML/Audio/SoundStream.hpp>||g" "$f" 2>/dev/null || true
+            sed -i "s|#include <SFML/Audio.hpp>||g" "$f" 2>/dev/null || true
+          done
+
           echo "=== Patch done ==="
 
       - uses: actions/setup-java@v4
