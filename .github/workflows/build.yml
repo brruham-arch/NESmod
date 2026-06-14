@@ -1,78 +1,48 @@
 name: Build NESMod APK
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Clone SimpleNES
         run: git clone https://github.com/amhndu/SimpleNES.git /tmp/SimpleNES
-
-      - name: Copy SimpleNES sources into project
+      - name: Copy SimpleNES sources
         run: |
           DST=app/src/main/cpp/nes
-          # Copy semua src kecuali yang SFML-dependent
           mkdir -p $DST/src/APU $DST/include/APU
-
-          # src files (buang Emulator.cpp AudioPlayer.cpp VirtualScreen.cpp KeybindingsParser.cpp)
-          for f in CPU MainBus PPU PictureBus Cartridge Controller \
-                   Mapper MapperNROM MapperSxROM MapperUxROM MapperCNROM \
-                   MapperAxROM MapperGxROM MapperMMC3 MapperColorDreams Log; do
+          for f in CPU MainBus PPU PictureBus Cartridge Controller Mapper MapperNROM MapperSxROM MapperUxROM MapperCNROM MapperAxROM MapperGxROM MapperMMC3 MapperColorDreams Log; do
             cp /tmp/SimpleNES/src/${f}.cpp $DST/src/
           done
           for f in APU DMC FrameCounter Noise Pulse Triangle Units; do
             cp /tmp/SimpleNES/src/APU/${f}.cpp $DST/src/APU/
           done
-
-          # include files (buang VirtualScreen.h AudioPlayer.h Emulator.h — kita punya versi sendiri)
-          for f in Cartridge Controller CPU CPUOpcodes IRQ Log MainBus \
-                   Mapper MapperAxROM MapperCNROM MapperColorDreams MapperGxROM \
-                   MapperMMC3 MapperNROM MapperSxROM MapperUxROM \
-                   PaletteColors PictureBus PPU; do
+          for f in Cartridge Controller CPU CPUOpcodes IRQ Log MainBus Mapper MapperAxROM MapperCNROM MapperColorDreams MapperGxROM MapperMMC3 MapperNROM MapperSxROM MapperUxROM PaletteColors PictureBus PPU; do
             cp /tmp/SimpleNES/include/${f}.h $DST/include/
           done
-          for f in APU Constants Divider DMC FrameCounter IRQ Noise Pulse \
-                   PulseUnits Timer Triangle Units; do
+          for f in APU Constants Divider DMC FrameCounter Noise Pulse PulseUnits Timer Triangle Units; do
             cp /tmp/SimpleNES/include/APU/${f}.h $DST/include/APU/ 2>/dev/null || true
           done
-          # spsc.hpp
           cp /tmp/SimpleNES/include/APU/spsc.hpp $DST/include/APU/ 2>/dev/null || true
-
-          echo "=== Copied files ==="
-          find $DST -name "*.cpp" -o -name "*.h" | sort
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Android SDK + NDK
-        uses: android-actions/setup-android@v3
-
+      - uses: android-actions/setup-android@v3
       - name: Install NDK r25c
+        run: sdkmanager "ndk;25.2.9519653" --sdk_root=$ANDROID_SDK_ROOT
+      - name: Generate Gradle wrapper
         run: |
-          sdkmanager "ndk;25.2.9519653" --sdk_root=$ANDROID_SDK_ROOT
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-
-      - name: Setup Gradle wrapper
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          gradle wrapper --gradle-version 8.1.1 || true
-
-      - name: Build Debug APK
+          curl -sL https://services.gradle.org/distributions/gradle-8.1.1-bin.zip -o /tmp/g.zip
+          unzip -q /tmp/g.zip -d /tmp/gd
+          /tmp/gd/gradle-8.1.1/bin/gradle wrapper --gradle-version 8.1.1
+          chmod +x gradlew
+      - name: Build APK
         run: ./gradlew assembleDebug --stacktrace
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: NESMod-debug
           path: app/build/outputs/apk/debug/app-debug.apk
