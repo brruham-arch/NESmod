@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+app/src/main/cpp/nes/src/*.cpp
+app/src/main/cpp/nes/include/*.h
+!app/src/main/cpp/nes/include/VirtualScreen.h
+!app/src/main/cpp/nes/include/AudioPlayer.h
+!app/src/main/cpp/nes/include/Emulator.h
+app/src/main/cpp/nes/src/APU/
+app/src/main/cpp/nes/include/APU/
