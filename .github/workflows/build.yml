@@ -16,39 +16,94 @@ jobs:
         run: |
           DST=app/src/main/cpp/nes
           mkdir -p $DST/src/APU $DST/include/APU
-          for f in CPU MainBus PPU PictureBus Cartridge Controller Mapper MapperNROM MapperSxROM MapperUxROM MapperCNROM MapperAxROM MapperGxROM MapperMMC3 MapperColorDreams Log; do
+
+          for f in CPU MainBus PPU PictureBus Cartridge Mapper MapperNROM \
+                   MapperSxROM MapperUxROM MapperCNROM MapperAxROM MapperGxROM \
+                   MapperMMC3 MapperColorDreams Log; do
             cp /tmp/SimpleNES/src/${f}.cpp $DST/src/
           done
           for f in APU DMC FrameCounter Noise Pulse Triangle Units; do
             cp /tmp/SimpleNES/src/APU/${f}.cpp $DST/src/APU/
           done
-          for f in Cartridge CPU CPUOpcodes IRQ Log MainBus Mapper MapperAxROM MapperCNROM MapperColorDreams MapperGxROM MapperMMC3 MapperNROM MapperSxROM MapperUxROM PictureBus PPU; do
+
+          for f in Cartridge CPU CPUOpcodes IRQ Log MainBus Mapper \
+                   MapperAxROM MapperCNROM MapperColorDreams MapperGxROM \
+                   MapperMMC3 MapperNROM MapperSxROM MapperUxROM \
+                   PaletteColors PictureBus PPU; do
             cp /tmp/SimpleNES/include/${f}.h $DST/include/
           done
-          for f in APU Constants Divider DMC FrameCounter Noise Pulse PulseUnits Timer Triangle Units; do
+          for f in APU Constants Divider DMC FrameCounter Noise Pulse \
+                   PulseUnits Timer Triangle Units; do
             cp /tmp/SimpleNES/include/APU/${f}.h $DST/include/APU/ 2>/dev/null || true
           done
           cp /tmp/SimpleNES/include/APU/spsc.hpp $DST/include/APU/ 2>/dev/null || true
+
+          # Jangan copy Controller.h — kita punya versi sendiri di repo
+          echo "=== Copy done ==="
+          ls $DST/include/
 
       - name: Patch SFML dependencies
         run: |
           DST=app/src/main/cpp/nes
 
-          # ── VirtualScreen.h (ours, already in repo) ──────────────────────
+          # 1. PaletteColors.h — ganti SFML/Config.hpp + tambah sf::Color stub
+          cat > $DST/include/PaletteColors.h << 'EOF'
+          #pragma once
+          #include <cstdint>
+          namespace sf {
+          struct Color {
+              uint8_t r, g, b, a;
+              Color(uint8_t r=0,uint8_t g=0,uint8_t b=0,uint8_t a=255):r(r),g(g),b(b),a(a){}
+              static const Color White;
+              static const Color Black;
+              static const Color Magenta;
+              static const Color Transparent;
+          };
+          }
+          namespace sn {
+          static const sf::Color colors[] = {
+            sf::Color(117,117,117),sf::Color(39,27,143),sf::Color(0,0,171),sf::Color(71,0,159),
+            sf::Color(143,0,119),sf::Color(171,0,19),sf::Color(167,0,0),sf::Color(127,11,0),
+            sf::Color(67,47,0),sf::Color(0,71,0),sf::Color(0,81,0),sf::Color(0,63,23),
+            sf::Color(27,63,95),sf::Color(0,0,0),sf::Color(0,0,0),sf::Color(0,0,0),
+            sf::Color(188,188,188),sf::Color(0,115,239),sf::Color(35,59,239),sf::Color(131,0,243),
+            sf::Color(191,0,191),sf::Color(231,0,91),sf::Color(219,43,0),sf::Color(203,79,15),
+            sf::Color(139,115,0),sf::Color(0,151,0),sf::Color(0,171,0),sf::Color(0,147,59),
+            sf::Color(0,131,139),sf::Color(0,0,0),sf::Color(0,0,0),sf::Color(0,0,0),
+            sf::Color(255,255,255),sf::Color(63,191,255),sf::Color(95,151,255),sf::Color(167,139,253),
+            sf::Color(247,123,255),sf::Color(255,119,183),sf::Color(255,119,99),sf::Color(255,155,59),
+            sf::Color(243,191,63),sf::Color(131,211,19),sf::Color(79,223,75),sf::Color(88,248,152),
+            sf::Color(0,235,219),sf::Color(0,0,0),sf::Color(0,0,0),sf::Color(0,0,0),
+            sf::Color(255,255,255),sf::Color(171,231,255),sf::Color(199,215,255),sf::Color(215,203,255),
+            sf::Color(255,199,255),sf::Color(255,199,219),sf::Color(255,191,179),sf::Color(255,219,171),
+            sf::Color(255,231,163),sf::Color(227,255,163),sf::Color(171,243,191),sf::Color(179,255,207),
+            sf::Color(159,255,243),sf::Color(0,0,0),sf::Color(0,0,0),sf::Color(0,0,0)
+          };
+          }
+          EOF
 
-          # ── PaletteColors.h — remove SFML/Config.hpp, define sf::Uint8 ──
-          sed -i 's|#include <SFML/Config.hpp>|#include <cstdint>\nnamespace sf { using Uint8 = uint8_t; }|' \
-            $DST/include/PaletteColors.h
+          # 2. PPU.h — hapus SFML/Graphics.hpp
+          sed -i 's|#include <SFML/Graphics.hpp>||g' $DST/include/PPU.h
 
-          # ── PPU.h — remove SFML/Graphics.hpp ────────────────────────────
-          sed -i 's|#include <SFML/Graphics.hpp>||' $DST/include/PPU.h
-
-          # ── PPU.cpp — fix sf::Color::Magenta → our Color ────────────────
+          # 3. PPU.cpp — fix sf::Color::Magenta
           sed -i 's|sf::Color::Magenta|sf::Color(255,0,255)|g' $DST/src/PPU.cpp
-          # fix sf::Color(r,g,b) calls in PPU.cpp setPixel
-          # PPU.cpp uses m_screen.setPixel(x, y, sf::Color(r,g,b)) — ok, our VirtualScreen accepts it
 
-          # ── Controller.h — replace SFML with bitmask impl ───────────────
+          # 4. AudioPlayer.h — gunakan spsc::RingBuffer real
+          cat > $DST/include/AudioPlayer.h << 'EOF'
+          #pragma once
+          #include <cstdint>
+          #include "APU/spsc.hpp"
+          class AudioPlayer {
+          public:
+              spsc::RingBuffer<float> audio_queue{4096};
+              int output_sample_rate;
+              AudioPlayer(int rate = 44100) : output_sample_rate(rate) {}
+              void start() {}
+              void stop()  {}
+          };
+          EOF
+
+          # 5. Controller.h — versi kita sudah ada di repo, tapi pastikan ada method strobe()
           cat > $DST/include/Controller.h << 'EOF'
           #pragma once
           #include <cstdint>
@@ -69,58 +124,14 @@ jobs:
           }
           EOF
 
-          # ── AudioPlayer.h — real spsc::RingBuffer compatible ─────────────
-          # APU.h needs: player.audio_queue (spsc::RingBuffer<float>&)
-          #              player.output_sample_rate (int)
-          # Solution: patch APU.h to not store reference, use pointer instead
-          # Easier: patch AudioPlayer.h to include spsc.hpp and use real type
-          cat > $DST/include/AudioPlayer.h << 'EOF'
-          #pragma once
-          #include <cstdint>
-          #include "APU/spsc.hpp"
-          class AudioPlayer {
-          public:
-              spsc::RingBuffer<float> audio_queue{4096};
-              int output_sample_rate;
-              AudioPlayer(int rate = 44100) : output_sample_rate(rate) {}
-              void start() {}
-              void stop()  {}
-          };
-          EOF
-
-          # ── PaletteColors.h — also needs sf::Color for array ────────────
-          # Add full sf::Color struct before palette array
-          python3 - << 'PYEOF'
-          import re
-          path = 'app/src/main/cpp/nes/include/PaletteColors.h'
-          with open(path) as f: content = f.read()
-          # Remove any existing sf:: namespace stub
-          content = re.sub(r'namespace sf \{[^}]+\}', '', content)
-          # Add Color struct after includes
-          stub = '''
-          namespace sf {
-          using Uint8 = uint8_t;
-          struct Color {
-              Uint8 r, g, b, a;
-              Color(Uint8 r=0,Uint8 g=0,Uint8 b=0,Uint8 a=255):r(r),g(g),b(b),a(a){}
-              static const Color White;
-              static const Color Black;
-              static const Color Magenta;
-          };
-          }
-          '''
-          # Insert after last #include
-          content = re.sub(r'(#include[^\n]*\n)(?!#include)', r'\1' + stub + '\n', content, count=1)
-          with open(path, 'w') as f: f.write(content)
-          PYEOF
-
-          # ── VirtualScreen.cpp — define static Color members ──────────────
+          # 6. VirtualScreen.cpp — define static Color members
           cat > $DST/src/VirtualScreen.cpp << 'EOF'
           #include "VirtualScreen.h"
           namespace sf {
           const Color Color::White{255,255,255,255};
           const Color Color::Black{0,0,0,255};
           const Color Color::Magenta{255,0,255,255};
+          const Color Color::Transparent{0,0,0,0};
           }
           EOF
 
