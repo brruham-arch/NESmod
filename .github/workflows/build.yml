@@ -8,8 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Clone SimpleNES
         run: git clone https://github.com/amhndu/SimpleNES.git /tmp/SimpleNES
+
       - name: Copy SimpleNES sources
         run: |
           DST=app/src/main/cpp/nes
@@ -20,28 +22,97 @@ jobs:
           for f in APU DMC FrameCounter Noise Pulse Triangle Units; do
             cp /tmp/SimpleNES/src/APU/${f}.cpp $DST/src/APU/
           done
-          for f in Cartridge Controller CPU CPUOpcodes IRQ Log MainBus Mapper MapperAxROM MapperCNROM MapperColorDreams MapperGxROM MapperMMC3 MapperNROM MapperSxROM MapperUxROM PaletteColors PictureBus PPU; do
+          for f in Cartridge CPU CPUOpcodes IRQ Log MainBus Mapper MapperAxROM MapperCNROM MapperColorDreams MapperGxROM MapperMMC3 MapperNROM MapperSxROM MapperUxROM PictureBus PPU; do
             cp /tmp/SimpleNES/include/${f}.h $DST/include/
           done
           for f in APU Constants Divider DMC FrameCounter Noise Pulse PulseUnits Timer Triangle Units; do
             cp /tmp/SimpleNES/include/APU/${f}.h $DST/include/APU/ 2>/dev/null || true
           done
           cp /tmp/SimpleNES/include/APU/spsc.hpp $DST/include/APU/ 2>/dev/null || true
+
+      - name: Patch SFML headers
+        run: |
+          DST=app/src/main/cpp/nes
+
+          # 1. PaletteColors.h — ganti SFML/Config.hpp dengan stdint
+          cat > $DST/include/PaletteColors.h << 'EOF'
+          #pragma once
+          #include <cstdint>
+          namespace sn {
+          static const uint32_t colors[] = {
+            0xFF757575,0xFF271B8F,0xFF0000AB,0xFF47009F,0xFF8F0077,0xFFAB0013,0xFFA70000,0xFF7F0B00,
+            0xFF432F00,0xFF004700,0xFF005100,0xFF003F17,0xFF1B3F5F,0xFF000000,0xFF000000,0xFF000000,
+            0xFFBCBCBC,0xFF0073EF,0xFF233BEF,0xFF8300F3,0xFFBF00BF,0xFFE7005B,0xFFDB2B00,0xFFCB4F0F,
+            0xFF8B7300,0xFF009700,0xFF00AB00,0xFF00933B,0xFF00838B,0xFF000000,0xFF000000,0xFF000000,
+            0xFFFFFFFF,0xFF3FBFFF,0xFF5F97FF,0xFFA78BFD,0xFFF77BFF,0xFFFF77B7,0xFFFF7763,0xFFFF9B3B,
+            0xFFF3BF3F,0xFF83D313,0xFF4FDF4B,0xFF58F898,0xFF00EBDB,0xFF000000,0xFF000000,0xFF000000,
+            0xFFFFFFFF,0xFFABE7FF,0xFFC7D7FF,0xFFD7CBFF,0xFFFFC7FF,0xFFFFC7DB,0xFFFFBFB3,0xFFFFDBAB,
+            0xFFFFE7A3,0xFFE3FFA3,0xFFABF3BF,0xFFB3FFCF,0xFF9FFFF3,0xFF000000,0xFF000000,0xFF000000
+          };
+          }
+          EOF
+
+          # 2. Controller.h — hapus SFML, ganti dengan bitmask sederhana
+          cat > $DST/include/Controller.h << 'EOF'
+          #pragma once
+          #include <cstdint>
+          namespace sn {
+          using Byte = uint8_t;
+          class Controller {
+          public:
+              void setKeyState(uint8_t mask) { m_keyState = mask; m_strobe = 0; }
+              Byte read() {
+                  if (m_strobe >= 8) return 1;
+                  return (m_keyState >> m_strobe++) & 1;
+              }
+              void write(Byte b) { if (b & 1) m_strobe = 0; }
+          private:
+              uint8_t m_keyState = 0;
+              int     m_strobe   = 0;
+          };
+          }
+          EOF
+
+          # 3. AudioPlayer.h — tambah field yang dibutuhkan APU.h
+          cat > $DST/include/AudioPlayer.h << 'EOF'
+          #pragma once
+          #include <cstdint>
+          #include <vector>
+          #include <atomic>
+          // Minimal AudioPlayer compatible dengan APU.h SimpleNES
+          struct spsc_queue_stub {
+              bool push(float) { return true; }
+          };
+          class AudioPlayer {
+          public:
+              spsc_queue_stub audio_queue;
+              int output_sample_rate;
+              AudioPlayer(int rate = 44100) : output_sample_rate(rate) {}
+              void start() {}
+              void stop()  {}
+          };
+          EOF
+
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+
       - uses: android-actions/setup-android@v3
+
       - name: Install NDK r25c
         run: sdkmanager "ndk;25.2.9519653" --sdk_root=$ANDROID_SDK_ROOT
+
       - name: Generate Gradle wrapper
         run: |
           curl -sL https://services.gradle.org/distributions/gradle-8.1.1-bin.zip -o /tmp/g.zip
           unzip -q /tmp/g.zip -d /tmp/gd
           /tmp/gd/gradle-8.1.1/bin/gradle wrapper --gradle-version 8.1.1
           chmod +x gradlew
+
       - name: Build APK
         run: ./gradlew assembleDebug --stacktrace
+
       - uses: actions/upload-artifact@v4
         with:
           name: NESMod-debug
