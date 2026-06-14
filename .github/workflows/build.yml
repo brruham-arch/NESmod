@@ -148,6 +148,19 @@ jobs:
             sed -i 's|#include <SFML/Audio.hpp>||g' $DST/src/APU/${f}.cpp 2>/dev/null || true
           done
 
+          # 7. patch APU src files
+          python3 -c "
+import os, re
+dst = 'app/src/main/cpp/nes/src/APU'
+for fn in os.listdir(dst):
+    if fn.endswith('.cpp'):
+        path = os.path.join(dst, fn)
+        txt = open(path).read()
+        txt = re.sub(r'#include\s*<SFML/Audio[^>]*>', '', txt)
+        open(path, 'w').write(txt)
+print('APU patched')
+"
+
           echo "=== Patch done ==="
 
       - uses: actions/setup-java@v4
