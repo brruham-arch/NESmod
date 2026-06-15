@@ -1,15 +1,19 @@
 package com.nesmod.app;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
+import android.provider.Settings;
+import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
-import android.view.MotionEvent;
-import android.view.View;
 import android.widget.Toast;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback {
@@ -23,9 +27,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private SurfaceView m_view;
     private Handler     m_handler = new Handler();
     private boolean     m_running = false;
-
-    // D-pad touch state
-    private int m_buttons = 0;
+    private int         m_buttons = 0;
 
     private final Runnable m_loop = new Runnable() {
         @Override public void run() {
@@ -41,19 +43,17 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onCreate(Bundle s) {
         super.onCreate(s);
-
         m_nes = new NESBridge();
         m_nes.nCreate();
         m_fb  = Bitmap.createBitmap(256, 240, Bitmap.Config.ARGB_8888);
 
         m_view = new SurfaceView(this);
         m_view.getHolder().addCallback(this);
-
-        // Touch input sederhana — tap kiri/kanan layar = left/right + A
         m_view.setOnTouchListener((v, e) -> {
             int w = v.getWidth();
             float x = e.getX();
-            if (e.getAction() == MotionEvent.ACTION_DOWN || e.getAction() == MotionEvent.ACTION_MOVE) {
+            if (e.getAction() == MotionEvent.ACTION_DOWN ||
+                e.getAction() == MotionEvent.ACTION_MOVE) {
                 if (x < w * 0.3f)      m_buttons = NESBridge.BTN_LEFT  | NESBridge.BTN_A;
                 else if (x > w * 0.7f) m_buttons = NESBridge.BTN_RIGHT | NESBridge.BTN_A;
                 else                   m_buttons = NESBridge.BTN_A;
@@ -62,18 +62,57 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             }
             return true;
         });
-
         setContentView(m_view);
+
+        // Minta akses semua file (Android 11+)
+        requestStoragePermission();
+    }
+
+    private void requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                Intent intent = new Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + getPackageName())
+                );
+                startActivityForResult(intent, 100);
+            }
+        } else {
+            requestPermissions(new String[]{
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
+            }, 101);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        // Setelah user grant, surface sudah ready — langsung load ROM
+        if (m_view.getHolder().getSurface().isValid()) {
+            startEmulator();
+        }
     }
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                startEmulator();
+            }
+            // else tunggu onActivityResult
+        } else {
+            startEmulator();
+        }
+    }
+
+    private void startEmulator() {
+        if (m_running) return;
         if (!m_nes.nLoadROM(ROM_PATH)) {
             Toast.makeText(this, "ROM tidak ditemukan:\n" + ROM_PATH, Toast.LENGTH_LONG).show();
             return;
         }
         m_nes.nStartSocket(SOCKET_PORT);
-        Toast.makeText(this, "NESMod siap | Socket port " + SOCKET_PORT, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "NESMod siap | port " + SOCKET_PORT, Toast.LENGTH_SHORT).show();
         m_running = true;
         m_handler.post(m_loop);
     }
@@ -90,8 +129,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         SurfaceHolder h = m_view.getHolder();
         Canvas c = h.lockCanvas();
         if (c == null) return;
-        Rect dst = new Rect(0, 0, c.getWidth(), c.getHeight());
-        c.drawBitmap(m_fb, new Rect(0, 0, 256, 240), dst, null);
+        c.drawBitmap(m_fb, new Rect(0,0,256,240),
+            new Rect(0,0,c.getWidth(),c.getHeight()), null);
         h.unlockCanvasAndPost(c);
     }
 
