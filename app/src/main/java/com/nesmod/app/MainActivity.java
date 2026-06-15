@@ -7,15 +7,17 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
 import android.provider.Settings;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
+import android.view.WindowManager;
 import android.widget.Toast;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback {
@@ -23,23 +25,41 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final String ROM_PATH    = "/sdcard/Download/smb.nes";
     private static final int    SOCKET_PORT = 7890;
 
-    private NESBridge   m_nes;
-    private Bitmap      m_fb;
-    private SurfaceView m_view;
-    private Thread      m_thread;
+    private NESBridge        m_nes;
+    private Bitmap           m_fb;
+    private SurfaceView      m_view;
+    private Thread           m_thread;
     private volatile boolean m_running = false;
     private volatile int     m_buttons = 0;
-    private Paint       m_paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private Paint            m_paint   = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private Rect m_gameArea = new Rect();
     private int  m_scrW, m_scrH;
 
+    // Tombol
     private Rect m_btnLeft, m_btnRight, m_btnUp, m_btnDown;
-    private Rect m_btnA, m_btnB, m_btnStart, m_btnSelect;
+    private Rect m_btnA, m_btnB, m_btnTA, m_btnTB;
+    private Rect m_btnStart, m_btnSelect;
+
+    // Turbo state
+    private int  m_turboTick = 0;
+    private boolean m_turboA = false, m_turboB = false;
 
     @Override
     protected void onCreate(Bundle s) {
         super.onCreate(s);
+
+        // Fullscreen immersive
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+        }
+
         m_nes = new NESBridge();
         m_nes.nCreate();
         m_fb  = Bitmap.createBitmap(256, 240, Bitmap.Config.ARGB_8888);
@@ -49,41 +69,49 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         m_view.setOnTouchListener((v, e) -> { handleTouch(e); return true; });
         setContentView(m_view);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    startActivityForResult(new Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:" + getPackageName())), 100);
-                } catch (Exception e) {
-                    startActivityForResult(
-                        new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), 100);
-                }
-                return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                && !Environment.isExternalStorageManager()) {
+            try {
+                startActivityForResult(new Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + getPackageName())), 100);
+            } catch (Exception e) {
+                startActivityForResult(
+                    new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), 100);
             }
         }
     }
 
+    // ── Input ────────────────────────────────────────────────────────────────
     private void handleTouch(MotionEvent e) {
-        int newBtns = 0;
-        int count = e.getPointerCount();
         int action = e.getActionMasked();
-        int upIdx  = (action == MotionEvent.ACTION_POINTER_UP) ? e.getActionIndex() : -1;
+        int newBtns = 0;
+        boolean touchTA = false, touchTB = false;
 
-        for (int i = 0; i < count; i++) {
-            if (i == upIdx) continue;
-            int x = (int) e.getX(i);
-            int y = (int) e.getY(i);
-            if (hit(m_btnLeft,   x, y)) newBtns |= NESBridge.BTN_LEFT;
-            if (hit(m_btnRight,  x, y)) newBtns |= NESBridge.BTN_RIGHT;
-            if (hit(m_btnUp,     x, y)) newBtns |= NESBridge.BTN_UP;
-            if (hit(m_btnDown,   x, y)) newBtns |= NESBridge.BTN_DOWN;
-            if (hit(m_btnA,      x, y)) newBtns |= NESBridge.BTN_A;
-            if (hit(m_btnB,      x, y)) newBtns |= NESBridge.BTN_B;
-            if (hit(m_btnStart,  x, y)) newBtns |= NESBridge.BTN_START;
-            if (hit(m_btnSelect, x, y)) newBtns |= NESBridge.BTN_SELECT;
+        int upIdx = (action == MotionEvent.ACTION_POINTER_UP
+                  || action == MotionEvent.ACTION_UP) ? e.getActionIndex() : -1;
+
+        for (int i = 0; i < e.getPointerCount(); i++) {
+            if (i == upIdx && action != MotionEvent.ACTION_MOVE) continue;
+            int x = (int) e.getX(i), y = (int) e.getY(i);
+            if (hit(m_btnLeft,   x,y)) newBtns |= NESBridge.BTN_LEFT;
+            if (hit(m_btnRight,  x,y)) newBtns |= NESBridge.BTN_RIGHT;
+            if (hit(m_btnUp,     x,y)) newBtns |= NESBridge.BTN_UP;
+            if (hit(m_btnDown,   x,y)) newBtns |= NESBridge.BTN_DOWN;
+            if (hit(m_btnA,      x,y)) newBtns |= NESBridge.BTN_A;
+            if (hit(m_btnB,      x,y)) newBtns |= NESBridge.BTN_B;
+            if (hit(m_btnStart,  x,y)) newBtns |= NESBridge.BTN_START;
+            if (hit(m_btnSelect, x,y)) newBtns |= NESBridge.BTN_SELECT;
+            if (hit(m_btnTA, x,y)) touchTA = true;
+            if (hit(m_btnTB, x,y)) touchTB = true;
         }
-        if (action == MotionEvent.ACTION_UP) newBtns = 0;
+
+        if (action == MotionEvent.ACTION_UP && e.getPointerCount() == 1) {
+            newBtns = 0; touchTA = false; touchTB = false;
+        }
+
+        m_turboA = touchTA;
+        m_turboB = touchTB;
         m_buttons = newBtns;
     }
 
@@ -91,61 +119,61 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         return r != null && r.contains(x, y);
     }
 
+    // ── Lifecycle ────────────────────────────────────────────────────────────
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         startEmulator();
     }
 
-    @Override
-    public void surfaceCreated(SurfaceHolder h) {
+    @Override public void surfaceCreated(SurfaceHolder h) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (Environment.isExternalStorageManager()) startEmulator();
-        } else {
-            startEmulator();
-        }
+        } else { startEmulator(); }
     }
 
-    @Override
-    public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {
+    @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int hh) {
         m_scrW = w; m_scrH = hh;
         setupLayout(w, hh);
     }
 
-    @Override
-    public void surfaceDestroyed(SurfaceHolder h) {
-        stopEmulator();
-    }
+    @Override public void surfaceDestroyed(SurfaceHolder h) { stopEmulator(); }
 
+    // ── Layout ───────────────────────────────────────────────────────────────
     private void setupLayout(int w, int h) {
-        int ctrlH = h / 3;
+        // Kontroller area bawah ~35% layar
+        int ctrlH = (int)(h * 0.35f);
         int gameH = h - ctrlH;
         int gameW = gameH * 256 / 240;
         if (gameW > w) { gameW = w; gameH = gameW * 240 / 256; }
         int gx = (w - gameW) / 2;
         m_gameArea = new Rect(gx, 0, gx + gameW, gameH);
 
-        int cy = gameH;
-        int bs = Math.min(ctrlH / 3, w / 9);
+        int cy = gameH + 4;
+        int bs = Math.min(ctrlH / 3, w / 10);
 
-        // D-pad kiri
-        int px = bs * 2, py = cy + ctrlH / 2;
+        // D-pad — pusat kiri
+        int px = bs * 2 + 8, py = cy + ctrlH / 2 - bs / 2;
         m_btnUp    = new Rect(px,      py-bs,   px+bs,   py);
         m_btnDown  = new Rect(px,      py+bs,   px+bs,   py+bs*2);
         m_btnLeft  = new Rect(px-bs,   py,      px,      py+bs);
         m_btnRight = new Rect(px+bs,   py,      px+bs*2, py+bs);
 
-        // A B kanan
-        int ax = w - bs * 4, ay = cy + ctrlH / 2;
-        m_btnB = new Rect(ax,      ay,      ax+bs*2, ay+bs);
-        m_btnA = new Rect(ax+bs*2, ay-bs/2, ax+bs*4, ay+bs/2);
+        // Tombol kanan: B, A, TB, TA
+        int rx = w - bs*5 - 8, ry = cy + ctrlH/2 - bs/2;
+        m_btnB  = new Rect(rx,      ry,       rx+bs,   ry+bs);
+        m_btnA  = new Rect(rx+bs+4, ry-bs/3,  rx+bs*2+4, ry+bs*2/3);
+        m_btnTB = new Rect(rx+bs*2+12, ry,     rx+bs*3+12, ry+bs);
+        m_btnTA = new Rect(rx+bs*3+16, ry-bs/3, rx+bs*4+16, ry+bs*2/3);
 
-        // Start Select tengah
-        int sx = w / 2 - bs, sy = cy + ctrlH * 2 / 3;
-        m_btnSelect = new Rect(sx,      sy, sx+bs,    sy+bs/2);
-        m_btnStart  = new Rect(sx+bs+8, sy, sx+bs*2+8, sy+bs/2);
+        // Start/Select tengah — ukuran lebih besar agar mudah dipencet
+        int sw = bs + bs/2, sh = bs;
+        int sx = w/2 - sw - 4, sy = cy + ctrlH/2 - sh/2;
+        m_btnSelect = new Rect(sx,       sy, sx+sw,    sy+sh);
+        m_btnStart  = new Rect(sx+sw+8,  sy, sx+sw*2+8, sy+sh);
     }
 
+    // ── Emulator loop ────────────────────────────────────────────────────────
     private void startEmulator() {
         if (m_running) return;
         if (!m_nes.nLoadROM(ROM_PATH)) {
@@ -160,27 +188,34 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             final long TARGET_NS = 1_000_000_000L / 60;
             while (m_running) {
                 long t0 = System.nanoTime();
-                m_nes.nSetButtons(1, m_buttons);
+
+                // Turbo — toggle tiap 3 frame
+                m_turboTick++;
+                int btns = m_buttons;
+                if (m_turboA && (m_turboTick % 4 < 2)) btns |= NESBridge.BTN_A;
+                if (m_turboB && (m_turboTick % 4 < 2)) btns |= NESBridge.BTN_B;
+
+                m_nes.nSetButtons(1, btns);
                 m_nes.nStepFrame();
                 m_nes.nCopyFramebuffer(m_fb);
                 renderFrame();
-                long elapsed = System.nanoTime() - t0;
-                long sleep   = (TARGET_NS - elapsed) / 1_000_000;
-                if (sleep > 1) try { Thread.sleep(sleep); } catch (Exception ignored) {}
+
+                long sleep = (TARGET_NS - (System.nanoTime() - t0)) / 1_000_000;
+                if (sleep > 1) try { Thread.sleep(sleep); } catch (Exception ig) {}
             }
         });
         m_thread.setName("NES-Loop");
         m_thread.start();
-
-        Toast.makeText(this, "NESMod | port " + SOCKET_PORT, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "NESMod siap | port " + SOCKET_PORT, Toast.LENGTH_SHORT).show();
     }
 
     private void stopEmulator() {
         m_running = false;
         m_nes.nStopSocket();
-        if (m_thread != null) try { m_thread.join(500); } catch (Exception ignored) {}
+        if (m_thread != null) try { m_thread.join(500); } catch (Exception ig) {}
     }
 
+    // ── Render ───────────────────────────────────────────────────────────────
     private void renderFrame() {
         SurfaceHolder holder = m_view.getHolder();
         Canvas c = holder.lockCanvas();
@@ -195,28 +230,32 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     }
 
     private void drawControls(Canvas c) {
+        int btns = m_buttons;
         // D-pad
-        drawBtn(c, m_btnLeft,   "◀", Color.argb(160,60,60,60));
-        drawBtn(c, m_btnRight,  "▶", Color.argb(160,60,60,60));
-        drawBtn(c, m_btnUp,     "▲", Color.argb(160,60,60,60));
-        drawBtn(c, m_btnDown,   "▼", Color.argb(160,60,60,60));
+        drawBtn(c, m_btnLeft,   "◀", Color.argb(180,60,60,60),  (btns&NESBridge.BTN_LEFT)!=0);
+        drawBtn(c, m_btnRight,  "▶", Color.argb(180,60,60,60),  (btns&NESBridge.BTN_RIGHT)!=0);
+        drawBtn(c, m_btnUp,     "▲", Color.argb(180,60,60,60),  (btns&NESBridge.BTN_UP)!=0);
+        drawBtn(c, m_btnDown,   "▼", Color.argb(180,60,60,60),  (btns&NESBridge.BTN_DOWN)!=0);
         // A B
-        drawBtn(c, m_btnA,      "A", Color.argb(200,180,30,30));
-        drawBtn(c, m_btnB,      "B", Color.argb(200,30,30,180));
-        // Start Select
-        drawBtn(c, m_btnSelect, "SEL", Color.argb(160,80,80,80));
-        drawBtn(c, m_btnStart,  "STA", Color.argb(160,80,80,80));
+        drawBtn(c, m_btnA,  "A",  Color.argb(200,180,30,30),  (btns&NESBridge.BTN_A)!=0);
+        drawBtn(c, m_btnB,  "B",  Color.argb(200,30,30,180),  (btns&NESBridge.BTN_B)!=0);
+        // Turbo
+        drawBtn(c, m_btnTA, "TA", Color.argb(180,180,80,30),  m_turboA);
+        drawBtn(c, m_btnTB, "TB", Color.argb(180,30,80,180),  m_turboB);
+        // Start/Select — warna lebih terang agar mudah lihat
+        drawBtn(c, m_btnSelect, "SEL", Color.argb(200,100,100,100), (btns&NESBridge.BTN_SELECT)!=0);
+        drawBtn(c, m_btnStart,  "STA", Color.argb(200,100,100,100), (btns&NESBridge.BTN_START)!=0);
     }
 
-    private void drawBtn(Canvas c, Rect r, String label, int color) {
+    private void drawBtn(Canvas c, Rect r, String label, int color, boolean pressed) {
         if (r == null) return;
-        m_paint.setColor(color);
+        m_paint.setColor(pressed ? Color.WHITE : color);
         m_paint.setStyle(Paint.Style.FILL);
-        c.drawRoundRect(r.left, r.top, r.right, r.bottom, 12, 12, m_paint);
-        m_paint.setColor(Color.WHITE);
+        c.drawRoundRect(r.left, r.top, r.right, r.bottom, 10, 10, m_paint);
+        m_paint.setColor(pressed ? color : Color.WHITE);
         m_paint.setTextAlign(Paint.Align.CENTER);
-        m_paint.setTextSize(Math.min(r.height(), r.width()) * 0.5f);
-        c.drawText(label, r.centerX(), r.centerY() + m_paint.getTextSize() * 0.35f, m_paint);
+        m_paint.setTextSize(Math.min(r.height(), r.width()) * 0.48f);
+        c.drawText(label, r.centerX(), r.centerY() + m_paint.getTextSize()*0.35f, m_paint);
     }
 
     @Override
