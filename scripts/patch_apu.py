@@ -1,25 +1,34 @@
 import os, re
 
-dst = 'app/src/main/cpp/nes/src/APU'
+dst_src = 'app/src/main/cpp/nes/src/APU'
+dst_inc = 'app/src/main/cpp/nes/include/APU'
 
-# 1. Hapus SFML includes
-for fn in os.listdir(dst):
+# 1. Hapus SFML includes dari semua APU src
+for fn in os.listdir(dst_src):
     if fn.endswith('.cpp'):
-        path = os.path.join(dst, fn)
+        path = os.path.join(dst_src, fn)
         txt = open(path).read()
         txt = re.sub(r'#include\s*<SFML/[^>]+>\n?', '', txt)
         open(path, 'w').write(txt)
+        print(f'SFML patched: {fn}')
 
-# 2. Fix APU.cpp — ganti push_back items dengan explicit cast ke FrameClockable&
-apu = os.path.join(dst, 'APU.cpp')
-txt = open(apu).read()
+# 2. Patch FrameCounter.h — tambah constructor yang accept initializer_list
+fc = os.path.join(dst_inc, 'FrameCounter.h')
+txt = open(fc).read()
 
-# Cari blok { slots; push_back; return FrameCounter }
-# Ganti semua push_back(std::ref(x)) dengan push_back(static_cast<FrameClockable&>(x))
-txt = re.sub(
-    r'slots\.push_back\((\w[\w.]+)\);',
-    lambda m: f'slots.push_back(static_cast<FrameClockable&>({m.group(1)}));',
-    txt
-)
-print('Fixed push_back with static_cast')
-open(apu, 'w').write(txt)
+# Tambah #include <initializer_list> dan constructor overload
+if 'initializer_list' not in txt:
+    txt = txt.replace(
+        '#pragma once',
+        '#pragma once\n#include <initializer_list>\n#include <functional>'
+    )
+    # Tambah constructor overload sebelum constructor yang ada
+    old_ctor = 'FrameCounter(std::vector<std::reference_wrapper<FrameClockable>> slots, IRQHandle& irq)'
+    new_ctor = '''FrameCounter(std::initializer_list<std::reference_wrapper<FrameClockable>> il, IRQHandle& irq)
+        : FrameCounter(std::vector<std::reference_wrapper<FrameClockable>>(il.begin(), il.end()), irq) {}
+    ''' + old_ctor
+    txt = txt.replace(old_ctor, new_ctor)
+    open(fc, 'w').write(txt)
+    print('FrameCounter.h patched with initializer_list constructor')
+else:
+    print('FrameCounter.h already patched')
